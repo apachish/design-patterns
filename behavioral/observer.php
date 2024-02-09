@@ -1,209 +1,106 @@
 <?php
 
-
-/**
- * The UserRepository represents a Subject. Various objects are interested in
- * tracking its internal state, whether it's adding a new user or removing one.
- */
-class UserRepository implements \SplSubject
-{
-    /**
-     * @var array The list of users.
-     */
-    private $users = [];
-
-    // Here goes the actual Observer management infrastructure. Note that it's
-    // not everything that our class is responsible for. Its primary business
-    // logic is listed below these methods.
-
-    /**
-     * @var array
-     */
-    private $observers = [];
-
-    public function __construct()
+    class Service implements IObserver
     {
-        // A special event group for observers that want to listen to all
-        // events.
-        $this->observers["*"] = [];
-    }
 
-    private function initEventGroup(string $event = "*")
-    {
-        if (!isset($this->observers[$event])) {
-            $this->observers[$event] = [];
+
+        protected $name;
+
+        protected $priority;
+
+
+        public function __construct($name, $priority)
+        {
+            $this->name = $name;
+            $this->priority = $priority;
+        }
+
+        public function update(IObservable $observable)
+        {
+            print_r("{$this->name} : {$observable->getEvent()} \n");
         }
     }
 
-    private function getEventObservers(string $event = "*"): array
+    class Publisher implements IObservable
     {
-        $this->initEventGroup($event);
-        $group = $this->observers[$event];
-        $all = $this->observers["*"];
 
-        return array_merge($group, $all);
-    }
+        protected $event;
 
-    public function attach(\SplObserver $observer, string $event = "*")
-    {
-        $this->initEventGroup($event);
+        protected $observers = [];
 
-        $this->observers[$event][] = $observer;
-    }
+        /**
+         * @return mixed
+         */
+        public function getEvent()
+        {
+            return $this->event;
+        }
 
-    public function detach(\SplObserver $observer, string $event = "*")
-    {
-        foreach ($this->getEventObservers($event) as $key => $s) {
-            if ($s === $observer) {
-                unset($this->observers[$event][$key]);
+        /**
+         * @param mixed $event
+         */
+        public function setEvent($event)
+        {
+            $this->event = $event;
+            $this->notify();
+        }
+
+
+        public function register(IObserver $observer)
+        {
+            $observer_key = spl_object_hash($observer);
+            $this->observers[$observer_key] = $observer;
+        }
+
+        public function unRegister(IObserver $observer)
+        {
+            $observer_key = spl_object_hash($observer);
+            unset($this->observers[$observer_key]);
+        }
+
+        public function notify()
+        {
+            echo "call notify \n";
+            foreach ($this->observers as $observer) {
+                echo "send notify \n";
+                $observer->update($this);
             }
         }
-    }
 
-    public function notify(string $event = "*", $data = null)
-    {
-        echo "UserRepository: Broadcasting the '$event' event.\n";
-
-        foreach ($this->getEventObservers($event) as $observer) {
-            echo "event".$event.".\n";
-            $observer->update($this, $event, $data);
+        /**
+         * @return array
+         */
+        public function getObservers(): array
+        {
+            return $this->observers;
         }
     }
 
-    // Here are the methods representing the business logic of the class.
-
-    public function initialize($filename)
+    interface IObservable
     {
-        echo "UserRepository: Loading user records from a file.\n";
-        // ...
-        $this->notify("users:init", $filename);
+        public function register(IObserver $observer);
+
+        public function unRegister(IObserver $observer);
+
+        public function notify();
     }
 
-    public function createUser(array $data): User
+    interface IObserver
     {
-        echo "UserRepository: Creating a user.\n";
+        public function update(IObservable $observable);
 
-        $user = new User();
-        $user->update($data);
-
-        $id = bin2hex(openssl_random_pseudo_bytes(16));
-        $user->update(["id" => $id]);
-        $this->users[$id] = $user;
-
-        $this->notify("users:created", $user);
-
-        return $user;
     }
 
-    public function updateUser(User $user, array $data): User
-    {
-        echo "UserRepository: Updating a user.\n";
+    $notify = new Publisher();
+    $email = new Service('MailObserver', 30);
+    $clock = new Service('ClockObserver', 60);
+    $desktop = new Service('DesktopObserver', 50);
+    $icons = new Service('IconsObserver', 20);
+    $notify->register($email);
+    $notify->register($clock);
+    $notify->register($desktop);
+    $notify->register($icons);
 
-        $id = $user->attributes["id"];
-        if (!isset($this->users[$id])) {
-            return null;
-        }
-
-        $user = $this->users[$id];
-        $user->update($data);
-
-        $this->notify("users:updated", $user);
-
-        return $user;
-    }
-
-    public function deleteUser(User $user)
-    {
-        echo "UserRepository: Deleting a user.\n";
-
-        $id = $user->attributes["id"];
-        if (!isset($this->users[$id])) {
-            return;
-        }
-
-        unset($this->users[$id]);
-
-        $this->notify("users:deleted", $user);
-    }
-}
-
-/**
- * Let's keep the User class trivial since it's not the focus of our example.
- */
-class User
-{
-    public $attributes = [];
-
-    public function update($data)
-    {
-        $this->attributes = array_merge($this->attributes, $data);
-    }
-}
-
-/**
- * This Concrete Component logs any events it's subscribed to.
- */
-class Logger implements \SplObserver
-{
-    private $filename;
-
-    public function __construct($filename)
-    {
-        $this->filename = $filename;
-        if (file_exists($this->filename)) {
-            unlink($this->filename);
-        }
-    }
-
-    public function update(\SplSubject $repository, string $event = null, $data = null)
-    {
-        $entry = date("Y-m-d H:i:s") . ": '$event' with data '" . json_encode($data) . "'\n";
-        file_put_contents($this->filename, $entry, FILE_APPEND);
-
-        echo "Logger: I've written '$event' entry to the log.\n";
-    }
-}
-
-/**
- * This Concrete Component sends initial instructions to new users. The client
- * is responsible for attaching this component to a proper user creation event.
- */
-class OnboardingNotification implements \SplObserver
-{
-    private $adminEmail;
-
-    public function __construct($adminEmail)
-    {
-        $this->adminEmail = $adminEmail;
-    }
-
-    public function update(\SplSubject $repository, string $event = null, $data = null)
-    {
-        // mail($this->adminEmail,
-        //     "Onboarding required",
-        //     "We have a new user. Here's his info: " .json_encode($data));
-
-        echo "OnboardingNotification: The notification has been emailed!\n";
-    }
-}
-
-/**
- * The client code.
- */
-
-$repository = new UserRepository();
-$repository->attach(new Logger(__DIR__ . "/log.txt"), "*");
-$repository->attach(new OnboardingNotification("1@example.com"), "users:created");
-
-$repository->initialize(__DIR__ . "/users.csv");
-
-// ...
-exit;
-$user = $repository->createUser([
-    "name" => "John Smith",
-    "email" => "john99@example.com",
-]);
-
-// ...
-
-$repository->deleteUser($user);
+    $notify->setEvent("do something ... ");
+    $notify->unRegister($email);
+    $notify->setEvent("something  else ... ");
